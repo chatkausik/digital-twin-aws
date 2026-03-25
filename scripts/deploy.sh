@@ -103,12 +103,31 @@ if [ -n "$ROOT_DOMAIN" ]; then
   # 3. CloudFront distribution — imported last because its config references the cert.
   #    If an existing distribution is found but the import fails, apply will hit
   #    CNAMEAlreadyExists, so we treat a found-but-unimported distribution as fatal.
-  CF_ID=$(aws cloudfront list-distributions \
-    --query "DistributionList.Items[?contains(Aliases.Items, '${ROOT_DOMAIN}')].Id | [0]" \
-    --output text 2>/dev/null || true)
+  #    Use Python instead of JMESPath: contains(Aliases.Items,...) silently returns
+  #    None when Items is absent (quantity=0), causing the lookup to miss a match.
+  CF_ID=$(aws cloudfront list-distributions --no-paginate --output json 2>/dev/null | \
+    python3 -c "
+import json, sys
+items = json.load(sys.stdin).get('DistributionList', {}).get('Items') or []
+targets = {'${ROOT_DOMAIN}', 'www.${ROOT_DOMAIN}'}
+for d in items:
+    if targets & set(d.get('Aliases', {}).get('Items') or []):
+        print(d['Id'])
+        break
+" 2>/dev/null || true)
+
+  echo "  CloudFront lookup for ${ROOT_DOMAIN}: CF_ID=${CF_ID:-<not found>}"
 
   if [ -n "$CF_ID" ] && [ "$CF_ID" != "None" ]; then
+    # Cert must be in state before we can import CloudFront (CF config references cert ARN)
+    if ! terraform state show "aws_acm_certificate.site[0]" > /dev/null 2>&1; then
+      echo "ERROR: ACM certificate not in Terraform state — cannot import CloudFront."
+      echo "       Re-run the deployment; the cert should now be in state after this run."
+      exit 1
+    fi
     import_required "aws_cloudfront_distribution.main" "$CF_ID"
+  else
+    echo "  No existing CloudFront distribution found — Terraform will create one."
   fi
 fi
 
