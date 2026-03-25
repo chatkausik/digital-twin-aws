@@ -36,38 +36,41 @@ else
   TF_VAR_ARGS=(-var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT")
 fi
 
-# Import a resource into state if it exists in AWS but not in state
+# Import a resource into state if it is not already tracked (best-effort, non-fatal).
 import_if_missing() {
   local resource="$1"
   local id="$2"
   if ! terraform state show "$resource" > /dev/null 2>&1; then
-    echo "Importing $resource..."
+    echo "  Importing $resource..."
     terraform import "${TF_VAR_ARGS[@]}" "$resource" "$id" || true
   fi
 }
 
-# Reconcile resources that may exist in AWS but be missing from state
+# Import a resource that is KNOWN to exist in AWS; exits if the import fails.
+import_required() {
+  local resource="$1"
+  local id="$2"
+  if ! terraform state show "$resource" > /dev/null 2>&1; then
+    echo "  Importing $resource (id=$id)..."
+    terraform import "${TF_VAR_ARGS[@]}" "$resource" "$id"
+  fi
+}
+
+# Reconcile resources that may exist in AWS but be missing from state.
+# Order matters: resources that others depend on must be imported first.
 echo "Checking for existing resources to import..."
 
-# IAM role
+# IAM role (no dependencies)
 import_if_missing "aws_iam_role.lambda_role" "${NAME_PREFIX}-lambda-role"
 
-# CloudFront distribution (only if custom domain is configured)
+# Custom-domain resources: cert → Route53 records → CloudFront (dependency order)
 ROOT_DOMAIN=$(terraform output -raw root_domain 2>/dev/null || true)
 if [ -z "$ROOT_DOMAIN" ] && [ "$ENVIRONMENT" = "prod" ]; then
   ROOT_DOMAIN="kausik-digital-twin.com"
 fi
 
 if [ -n "$ROOT_DOMAIN" ]; then
-  CF_ID=$(aws cloudfront list-distributions \
-    --query "DistributionList.Items[?contains(Aliases.Items, '${ROOT_DOMAIN}')].Id | [0]" \
-    --output text 2>/dev/null || true)
-
-  if [ -n "$CF_ID" ] && [ "$CF_ID" != "None" ]; then
-    import_if_missing "aws_cloudfront_distribution.main" "$CF_ID"
-  fi
-
-  # ACM certificate (must be in us-east-1 for CloudFront)
+  # 1. ACM certificate — must be in state before CloudFront can be imported
   CERT_ARN=$(aws acm list-certificates --region us-east-1 \
     --query "CertificateSummaryList[?DomainName=='${ROOT_DOMAIN}'].CertificateArn | [0]" \
     --output text 2>/dev/null || true)
@@ -76,16 +79,14 @@ if [ -n "$ROOT_DOMAIN" ]; then
     import_if_missing "aws_acm_certificate.site[0]" "$CERT_ARN"
   fi
 
-  # Route53 validation CNAME records
+  # 2. Route53 DNS validation records for the cert
   ZONE_ID=$(aws route53 list-hosted-zones-by-name \
     --dns-name "${ROOT_DOMAIN}" \
     --query "HostedZones[0].Id" --output text 2>/dev/null | cut -d'/' -f3 || true)
 
   if [ -n "$ZONE_ID" ] && [ "$ZONE_ID" != "None" ]; then
-    # List existing validation CNAMEs and import each one
     while IFS= read -r record_name; do
       [ -z "$record_name" ] && continue
-      # Derive the for_each key (domain the cert covers) from the record name
       if [[ "$record_name" == *".www."* ]]; then
         key="www.${ROOT_DOMAIN}"
       else
@@ -97,6 +98,17 @@ if [ -n "$ROOT_DOMAIN" ]; then
     done < <(aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
       --query "ResourceRecordSets[?Type=='CNAME' && starts_with(Name, '_')].Name" \
       --output text 2>/dev/null | tr '\t' '\n' | sed 's/\.$//' || true)
+  fi
+
+  # 3. CloudFront distribution — imported last because its config references the cert.
+  #    If an existing distribution is found but the import fails, apply will hit
+  #    CNAMEAlreadyExists, so we treat a found-but-unimported distribution as fatal.
+  CF_ID=$(aws cloudfront list-distributions \
+    --query "DistributionList.Items[?contains(Aliases.Items, '${ROOT_DOMAIN}')].Id | [0]" \
+    --output text 2>/dev/null || true)
+
+  if [ -n "$CF_ID" ] && [ "$CF_ID" != "None" ]; then
+    import_required "aws_cloudfront_distribution.main" "$CF_ID"
   fi
 fi
 
