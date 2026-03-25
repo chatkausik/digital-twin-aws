@@ -1,0 +1,40 @@
+{
+    "full_name": "Kausik Chattapadhyay",
+    "name": "Kausik",
+    "current_role": "Advisor II Software Development Engineering at Fiserv | Data Science | Generative AI | MLOps",
+    "location": "Washington DC-Baltimore Area, United States",
+    "email": "chat.kausik@gmail.com",
+    "linkedin": "linkedin.com/in/kausik-chat-data-science",
+    "specialties": [
+      "Data Science & Machine Learning",
+      "Big Data Technologies (Spark, Hive, Kafka, HBase)",
+      "Deep Learning & Neural Networks (CNN, TensorFlow)",
+      "Generative AI & LLMs",
+      "AWS Modernization & Cloud",
+      "Mainframe & Java Development",
+      "Statistical Modeling & Predictive Analytics"
+    ],
+    "years_experience": 19,
+    "education": [
+      {
+        "degree": "Bachelor of Engineering",
+        "institution": "Bengal Engineering and Science University, Shibpur",
+        "year": "2006"
+      },
+      {
+        "degree": "Executive Certificate in Management Program (MBA)",
+        "institution": "McIntire School of Commerce",
+        "year": "2016"
+      },
+      {
+        "degree": "Data Scientist Certificate (Machine Learning, Deep Learning, Python)",
+        "institution": "Springboard",
+        "year": "2017"
+      },
+      {
+        "degree": "Master's Degree, Data Science",
+        "institution": "Bellevue University",
+        "year": "2024"
+      }
+    ]
+  }
