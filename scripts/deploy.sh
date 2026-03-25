@@ -129,6 +129,20 @@ for d in items:
   else
     echo "  No existing CloudFront distribution found — Terraform will create one."
   fi
+
+  # 4. Route53 alias records (A + AAAA for root and www) — depend on CloudFront being in state.
+  #    Use import_required: if the records exist in AWS but CF is not in state, the import
+  #    would fail silently and apply would then hit "record already exists".
+  if [ -n "$ZONE_ID" ] && [ "$ZONE_ID" != "None" ]; then
+    if terraform state show "aws_cloudfront_distribution.main" > /dev/null 2>&1; then
+      import_required "aws_route53_record.alias_root[0]"      "${ZONE_ID}_${ROOT_DOMAIN}_A"
+      import_required "aws_route53_record.alias_root_ipv6[0]" "${ZONE_ID}_${ROOT_DOMAIN}_AAAA"
+      import_required "aws_route53_record.alias_www[0]"       "${ZONE_ID}_www.${ROOT_DOMAIN}_A"
+      import_required "aws_route53_record.alias_www_ipv6[0]"  "${ZONE_ID}_www.${ROOT_DOMAIN}_AAAA"
+    else
+      echo "  CloudFront not in state — skipping alias record imports (will be created with CF)."
+    fi
+  fi
 fi
 
 echo "Applying Terraform..."
